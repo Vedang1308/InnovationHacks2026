@@ -17,3 +17,5 @@ backend.log
 
 # OS
 .DS_Store
+*.nc
+backend/data/satellite_cache/

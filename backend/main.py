@@ -1,112 +1,132 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from sse_starlette.sse import EventSourceResponse
 import os
+import uuid
+import time
+import asyncio
 import json
 from typing import List, Dict, Any
-from agents.librarian import LibrarianAgent
-from agents.geospatial import GeospatialAgent
-from agents.satellite import SatelliteAgent
-from agents.auditor import AuditorAgent
+from agents.orchestrator import TraceTrustOrchestrator
 
-app = FastAPI(title="TraceTrust API", version="1.1.0")
+app = FastAPI(title="TraceTrust Agentic API", version="2.0.0")
 
 # Enable CORS for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"], # For hackathon accessibility
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize Agents
-librarian = LibrarianAgent(data_dir="data/")
-geospatial = GeospatialAgent(cache_file="data/geo_cache.json")
-satellite = SatelliteAgent()
-auditor = AuditorAgent()
+# Global state for audit monitoring
+audit_db: Dict[str, Any] = {}
+event_queues: Dict[str, asyncio.Queue] = {}
 
-# Shared state (In-memory for prototype)
-audit_history: Dict[str, Any] = {}
+async def audit_event_callback(audit_id: str, agent: str, message: str, data: Any = None):
+    """
+    Callback passed to the Orchestrator to stream events.
+    """
+    if audit_id in event_queues:
+        payload = {
+            "agent": agent,
+            "message": message,
+            "data": data,
+            "timestamp": time.time()
+        }
+        await event_queues[audit_id].put(payload)
+        
+        # Also update the persistent log
+        if audit_id in audit_db:
+            audit_db[audit_id]["logs"].append(payload)
 
-async def run_audit_sequence(file_path: str, audit_id: str):
+async def execute_audit_graph(audit_id: str, pdf_path: str):
     """
-    Background task to run the full TraceTrust audit pipeline.
+    Background worker to invoke the LangGraph state machine with event streaming.
     """
-    audit_history[audit_id] = {"status": "Processing", "logs": ["Audit sequence initiated."]}
+    # Create the orchestrator with the streaming callback
+    orc = TraceTrustOrchestrator(
+        event_callback=lambda agent, msg, data: audit_event_callback(audit_id, agent, msg, data)
+    )
     
     try:
-        # 1. Librarian (Extraction)
-        audit_history[audit_id]["logs"].append("Librarian Agent parsing PDF using RAG/FAISS...")
-        # Since ingestion can be slow, I'm using the Librarian with RAG
-        facilities = librarian.extract_facilities_from_pdf(file_path)
-        audit_history[audit_id]["logs"].append(f"Successfully extracted {len(facilities)} facilities.")
-        
-        results = []
-        for fac in facilities:
-            name = fac.get("name", "Unknown Facility")
-            loc_str = fac.get("location", "")
-            reported = fac.get("reported_emissions", 0.0)
-            
-            # 2. Geospatial (Geocoding)
-            audit_history[audit_id]["logs"].append(f"Geocoding {name} at {loc_str}...")
-            coords = geospatial.geocode(loc_str)
-            
-            if coords:
-                # 3. Satellite (ASDI/Climate TRACE)
-                audit_history[audit_id]["logs"].append(f"Querying satellite data for {name}...")
-                sat_data = satellite.get_emissions_from_climate_trace(coords["lat"], coords["lon"])
-                sat_emissions = sat_data[0]["emissions_tco2e"] if sat_data else 0.0
-                
-                # 4. Auditor (Scoring)
-                audit_history[audit_id]["logs"].append(f"Calculating Veracity Score for {name}...")
-                score = auditor.calculate_veracity_score(float(reported), sat_emissions)
-                
-                results.append({
-                    "name": name,
-                    "location": loc_str,
-                    "coords": coords,
-                    "reported": reported,
-                    "satellite": sat_emissions,
-                    **score
-                })
-        
-        # Final Summary
-        summary = auditor.generate_audit_report(results)
-        audit_history[audit_id].update({
+        final_state = await orc.run_audit(pdf_path, audit_id)
+        audit_db[audit_id].update({
             "status": "Complete",
-            "results": summary,
-            "logs": audit_history[audit_id]["logs"] + ["Audit complete. Reports generated."]
+            "results": final_state.get("audit_results"),
+            "end_time": time.time()
         })
-        
+        # Signal end of stream
+        await audit_event_callback(audit_id, "system", "FINALIZE", {"status": "Complete"})
     except Exception as e:
-        audit_history[audit_id]["status"] = "Failed"
-        audit_history[audit_id]["logs"].append(f"ERROR: {str(e)}")
+        audit_db[audit_id].update({
+            "status": "Failed",
+            "error": str(e)
+        })
+        await audit_event_callback(audit_id, "system", f"ERROR: {str(e)}", {"status": "Failed"})
 
 @app.get("/")
-async def root():
-    return {"message": "TraceTrust API is online", "status": "active"}
+async def health_check():
+    return {"service": "TraceTrust 2.0", "engine": "LangGraph", "status": "online"}
 
 @app.post("/audit/upload")
-async def upload_report(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    """Upload an ESG report (PDF) for auditing."""
+async def start_audit(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+        raise HTTPException(status_code=400, detail="Audit requires a valid PDF report.")
     
     file_path = f"data/{file.filename}"
     with open(file_path, "wb") as f:
         f.write(await file.read())
     
-    audit_id = f"audit_{os.urandom(4).hex()}"
-    background_tasks.add_task(run_audit_sequence, file_path, audit_id)
+    audit_id = f"aud_{uuid.uuid4().hex[:8]}"
+    audit_db[audit_id] = {
+        "id": audit_id,
+        "status": "Initializing",
+        "logs": [],
+        "results": None,
+        "start_time": time.time()
+    }
+    event_queues[audit_id] = asyncio.Queue()
     
-    return {"audit_id": audit_id, "message": "Audit sequence initiated."}
+    background_tasks.add_task(execute_audit_graph, audit_id, file_path)
+    
+    return {"audit_id": audit_id, "status": "initiated"}
+
+@app.get("/audit/events/{audit_id}")
+async def audit_events(audit_id: str):
+    """
+    SSE Endpoint for real-time audit streaming.
+    """
+    if audit_id not in event_queues:
+        raise HTTPException(status_code=404, detail="Audit stream not found.")
+
+    async def event_generator():
+        queue = event_queues[audit_id]
+        try:
+            while True:
+                event = await queue.get()
+                yield {"data": json.dumps(event)}
+                if event["agent"] == "system" and event["data"].get("status") in ("Complete", "Failed"):
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    return EventSourceResponse(event_generator())
 
 @app.get("/audit/{audit_id}")
-async def get_audit_status(audit_id: str):
-    """Retrieve the status and results of an audit."""
-    if audit_id not in audit_history:
+async def get_audit(audit_id: str):
+    if audit_id not in audit_db:
         raise HTTPException(status_code=404, detail="Audit ID not found.")
-    return audit_history[audit_id]
+    return audit_db[audit_id]
+
+@app.get("/history")
+async def get_history():
+    return sorted(
+        [v for v in audit_db.values()],
+        key=lambda x: x.get("start_time", 0),
+        reverse=True
+    )
 
 if __name__ == "__main__":
     import uvicorn
