@@ -1,0 +1,81 @@
+# TraceTrust: The Agentic Satellite Auditor
+**Subtitle:** Verifying Corporate Sustainability through Autonomous Satellite Auditing.
+
+---
+
+## 1. Executive Summary
+**TraceTrust** is an agentic AI system designed to solve the **"Transparency Gap"** in corporate carbon accounting. While companies self-report emissions in static PDF reports, there is no automated way to verify these claims against physical reality. TraceTrust uses a multi-agent pipeline to extract facility data from reports, geolocate them, and cross-reference them with real-time satellite emissions data from the **Amazon Sustainability Data Initiative (ASDI)** and **Climate TRACE**.
+
+---
+
+## 2. The "Open & Free" Technical Stack
+To ensure the project is 100% open-source and cost-free, the following stack is utilized:
+
+| Component | Tool | Why? |
+| :--- | :--- | :--- |
+| **LLM (Intelligence)** | **Ollama + Llama 3** | Runs locally; zero API costs; fully open-weights. |
+| **Orchestration** | **Phidata / LangGraph** | Open-source frameworks for stateful, multi-agent workflows. |
+| **PDF Extraction** | **Unstructured.io** | Industry-standard for layout-aware parsing of complex ESG tables. |
+| **Satellite Data** | **ASDI (Sentinel-5P)** | Public S3 buckets on AWS with zero egress costs. |
+| **Emissions Data** | **Climate TRACE API** | Free, CC 4.0 data for 744M+ global facilities. |
+| **Backend** | **FastAPI** | High-performance Python framework for geospatial processing. |
+| **Frontend** | **Next.js + Tailwind** | For a high-fidelity "Mission Control" dashboard. |
+
+---
+
+## 3. The Agentic Pipeline (Logic Flow)
+
+### A. The Librarian Agent (NLP Specialist)
+* **Input:** Corporate Sustainability PDF (e.g., Amazon, Exxon, or Walmart).
+* **Process:** Uses `unstructured` to identify tables containing "Facility Lists" or "Asset Locations."
+* **Reasoning:** LLM filters noise to extract: `[{ "facility": "GYR3 Fulfillment Center", "city": "Goodyear, AZ", "claimed_emissions": "X tons" }]`.
+
+### B. The Geospatial Agent (The Mapper)
+* **Process:** Converts addresses to $Lat/Long$ using `geopy` and a local caching layer to avoid rate limits.
+* **Verification:** Cross-references names against **OpenStreetMap** to ensure the facility exists.
+
+### C. The Satellite Agent (The Auditor)
+* **Dual-Path Verification:**
+    1.  **Climate TRACE:** Queries for historical tonnage ($CO_2/CH_4$) at those specific coordinates.
+    2.  **ASDI (Sentinel-5P):** Pulls raw spectral data from AWS S3 to visualize the $NO_2$ or Methane plume over the site.
+* **Action:** Downloads NetCDF files and uses `xarray` to extract concentration values.
+
+### D. The Auditor Agent (The Scorer)
+* **The Math:** Calculates the **Veracity Score ($V$):**
+    $$V = 100 - \left( \frac{|E_{satellite} - E_{reported}|}{E_{satellite}} \times 100 \right)$$
+* **Output:** Generates a final "Confidence Report" flagging discrepancies over 20%.
+
+---
+
+## 4. UI/UX: The "Mission Control" Dashboard
+The dashboard is designed to look like a high-tech audit center to impress judges.
+* **Interactive Map (Mapbox/Leaflet):** Plots audited facilities. Green markers = Verified; Red = Discrepancy.
+* **Agent Activity Log:** A streaming terminal on the side showing the "thought process" of each agent (e.g., *"Librarian found 14 facilities on Page 42..."*).
+* **The "Evidence" View:** A side-by-side comparison of the PDF table snippet vs. the Satellite Plume visualization.
+
+
+
+---
+
+## 5. 48-Hour Hackathon Roadmap
+
+### **Day 1: Foundation & Data**
+* **0-4h:** Set up monorepo and install Ollama/Llama 3 locally.
+* **4-12h:** Build the **Librarian Agent** using `unstructured`. Test it on the Amazon 2024 Sustainability Report.
+* **12-16h:** Integrate the **Climate TRACE API** to fetch ground-truth data.
+
+### **Day 2: Satellite & Logic**
+* **16-24h:** Script the **Satellite Agent** to pull Sentinel-5P files from ASDI (AWS S3).
+* **24-32h:** Build the **Auditor Agent** logic and discrepancy scoring system.
+* **32-40h:** Develop the **Next.js Dashboard** with the interactive map and agent logs.
+
+### **Final 8 Hours: Verification & Pitch**
+* **40-44h:** Run "Audit Tests" on 3 diverse companies (e.g., Amazon, BP, and a local AZ utility).
+* **44-48h:** Record the demo and prepare the pitch focusing on **Verifiable Results.**
+
+---
+
+## 6. Why This Wins the Amazon Track
+1.  **Feasibility:** Uses Amazon's own **ASDI** resources, which is a major judging criterion.
+2.  **Innovation:** It moves from passive "tracking" to active "auditing" using **Agentic AI.**
+3.  **Verifiable:** You aren't presenting a "concept"; you are presenting a tool that shows hard data discrepancies between reports and space-based observations.
