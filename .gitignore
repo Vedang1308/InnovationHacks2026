@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+.next/
+out/
+build/
+venv/
+.env
+.env.local
+__pycache__/
+*.pyc
+
+# Data & Logs
+backend/data/*.pdf
+backend/data/tracetrust_index/
+backend.log
+*.log
+
+# OS
+.DS_Store

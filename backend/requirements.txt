@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+phidata
+unstructured[pdf]
+geopy
+boto3
+xarray
+rioxarray
+python-dotenv
+requests
+pandas
+tabulate
