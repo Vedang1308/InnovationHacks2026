@@ -37,6 +37,7 @@ function RecenterMap({ coords }: { coords: [number, number] }) {
 }
 
 export default function TraceTrustDashboard() {
+  const [hasMounted, setHasMounted] = useState(false);
   const [auditId, setAuditId] = useState<string | null>(null);
   const [auditStatus, setAuditStatus] = useState<string>("IDLE");
   const [logs, setLogs] = useState<any[]>([]);
@@ -47,6 +48,11 @@ export default function TraceTrustDashboard() {
   
   const eventSourceRef = useRef<EventSource | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  // Hydration safety
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -153,8 +159,13 @@ export default function TraceTrustDashboard() {
             </div>
             
             <div className="flex-1 w-full h-full z-0">
-               {typeof window !== "undefined" && (
-                 <MapContainer center={mapCenter} zoom={3} style={{ height: "100%", width: "100%", filter: "invert(100%) hue-rotate(180deg) brightness(0.6) contrast(1.2)" }}>
+               {hasMounted ? (
+                 <MapContainer 
+                    center={mapCenter} 
+                    zoom={3} 
+                    style={{ height: "100%", width: "100%", filter: "invert(100%) hue-rotate(180deg) brightness(0.6) contrast(1.2)" }}
+                    {...({} as any)}
+                 >
                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                     {facilities.map((f, i) => (
                       <Marker key={i} position={[f.lat, f.lng]}>
@@ -165,6 +176,10 @@ export default function TraceTrustDashboard() {
                     ))}
                     {mapCenter[0] !== 20 && <RecenterMap coords={mapCenter} />}
                  </MapContainer>
+               ) : (
+                 <div className="w-full h-full bg-slate-900 flex items-center justify-center">
+                    <p className="text-[10px] text-slate-600 font-bold uppercase tracking-widest animate-pulse">Establishing Orbital Link...</p>
+                 </div>
                )}
             </div>
             
