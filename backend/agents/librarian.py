@@ -26,16 +26,18 @@ Extract ALL physical facilities, assets, buildings, data centers, fulfillment ce
 
 For each facility, extract:
 - name: The facility name or identifier
+- street_address: The exact physical street address if present (null if not specified)
 - city: The city where it is located
 - state: The state/province (if applicable)
 - country: The country
-- type: The type of facility (e.g., "Fulfillment Center", "Data Center", "Wind Farm", "Solar Farm", "Office", "Warehouse", etc.)
+- type: The type of facility (e.g., "Fulfillment Center", "Data Center", "Refinery", "Wind Farm", "Office", "Warehouse", etc.)
+- scope_type: Categorize the facility's main emissions footprint. Return "Scope 1" if it's direct fossil-fuel combustion (e.g., Refinery, Power Plant, Oil Field). Return "Scope 2" if its footprint is purchased electricity (e.g., Data Center, Office, Fulfillment Center). Default to Scope 2 for tech/logistics properties.
 - reported_emissions_tons: Any reported CO2/GHG emissions in metric tons (null if not specified)
 
 Return ONLY a valid JSON array. Example:
 [
-  {"name": "GYR3 Fulfillment Center", "city": "Goodyear", "state": "AZ", "country": "USA", "type": "Fulfillment Center", "reported_emissions_tons": null},
-  {"name": "HQ2 Office", "city": "Arlington", "state": "VA", "country": "USA", "type": "Office", "reported_emissions_tons": 5000}
+  {"name": "GYR3 Fulfillment Center", "street_address": "8181 W Roosevelt St", "city": "Goodyear", "state": "AZ", "country": "USA", "type": "Fulfillment Center", "scope_type": "Scope 2", "reported_emissions_tons": null},
+  {"name": "HQ2 Office", "street_address": null, "city": "Arlington", "state": "VA", "country": "USA", "type": "Office", "scope_type": "Scope 2", "reported_emissions_tons": 5000}
 ]
 
 If no facilities are found, return an empty array: []
@@ -319,10 +321,12 @@ class LibrarianAgent:
             facilities.append(
                 {
                     "name": m.group("name").strip(),
+                    "street_address": None,
                     "city": m.group("city").strip(),
                     "state": m.group("state").strip(),
-                    "country": "USA",
+                    "country": "",
                     "type": "Unknown",
+                    "scope_type": "Scope 1",  # basic fallback
                     "reported_emissions_tons": self._extract_nearby_number(text, m.start()),
                 }
             )
@@ -339,10 +343,12 @@ class LibrarianAgent:
                 facilities.append(
                     {
                         "name": name,
+                        "street_address": None,
                         "city": m.group("city").strip() if m.group("city") else "",
                         "state": m.group("state") or "",
-                        "country": "USA",
+                        "country": "",
                         "type": "Logistics",
+                        "scope_type": "Scope 2",
                         "reported_emissions_tons": self._extract_nearby_number(text, m.start()),
                     }
                 )
@@ -359,10 +365,12 @@ class LibrarianAgent:
                 facilities.append(
                     {
                         "name": name,
+                        "street_address": None,
                         "city": m.group("city").strip() if m.group("city") else "",
                         "state": m.group("state") or "",
-                        "country": "USA",
+                        "country": "",
                         "type": "Renewable Energy",
+                        "scope_type": "Scope 2",
                         "reported_emissions_tons": None,
                     }
                 )
@@ -394,20 +402,26 @@ class LibrarianAgent:
         return [
             {
                 "name": "Permian Basin Oil Field",
+                "street_address": None,
                 "city": "Midland", "state": "TX", "country": "USA",
                 "type": "Oil & Gas Production",
+                "scope_type": "Scope 1",
                 "reported_emissions_tons": 45_000_000,
             },
             {
                 "name": "Los Angeles County Transportation",
+                "street_address": None,
                 "city": "Los Angeles", "state": "CA", "country": "USA",
                 "type": "Road Transportation",
+                "scope_type": "Scope 1",
                 "reported_emissions_tons": 30_000_000,
             },
             {
                 "name": "Appalachian Marcellus Gas Field",
+                "street_address": None,
                 "city": "State College", "state": "PA", "country": "USA",
                 "type": "Oil & Gas Production",
+                "scope_type": "Scope 1",
                 "reported_emissions_tons": 35_000_000,
             },
         ]

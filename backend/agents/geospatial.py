@@ -29,11 +29,19 @@ class GeospatialAgent:
 
         results = []
         for facility in facilities:
-            query = self._build_query(facility)
-            if log_fn:
-                log_fn(f"   🔎 Geocoding: {query}")
+            queries = self._build_queries(facility)
+            coords = (0.0, 0.0)
+            
+            for q in queries:
+                if log_fn:
+                    log_fn(f"   🔎 Geocoding: {q}")
+                
+                coords = await self._geocode(q)
+                if coords[0] != 0.0:
+                    break
+                # small delay between fallback attempts
+                await asyncio.sleep(1.1)
 
-            coords = await self._geocode(query)
             enriched = {**facility, "lat": coords[0], "lng": coords[1]}
 
             if coords[0] != 0.0:
@@ -74,12 +82,35 @@ class GeospatialAgent:
         return (39.8283, -98.5795)
 
     @staticmethod
-    def _build_query(facility: dict) -> str:
-        parts = []
+    def _build_queries(facility: dict) -> list[str]:
+        """Build exactly targeted queries with fallbacks."""
+        queries = []
+        
+        base_parts = []
         if facility.get("city"):
-            parts.append(facility["city"])
+            base_parts.append(facility["city"])
         if facility.get("state"):
-            parts.append(facility["state"])
+            base_parts.append(facility["state"])
         if facility.get("country"):
-            parts.append(facility["country"])
-        return ", ".join(parts) if parts else facility.get("name", "")
+            base_parts.append(facility["country"])
+            
+        base_str = ", ".join(base_parts)
+
+        # 1. Best attempt: Street Address + Region
+        if facility.get("street_address") and base_str:
+            queries.append(f"{facility['street_address']}, {base_str}")
+        
+        # 2. Point of Interest Attempt: Name + Region
+        if facility.get("name") and base_str:
+            # Clean name a bit (Nominatim struggles with 'Fulfillment Center' sometimes, but we try)
+            queries.append(f"{facility['name']}, {base_str}")
+            
+        # 3. Safe fallback: Just the city center
+        if base_str:
+            queries.append(base_str)
+            
+        # 4. Ultimate fallback
+        if not queries:
+            queries.append(facility.get("name", ""))
+
+        return queries

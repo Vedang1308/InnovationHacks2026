@@ -342,6 +342,19 @@ async def _run_direct_pipeline(
     _log(store, "auditor", "✅ Audit complete!")
     store["status"] = "completed"
     store["results"] = results
+    
+    # Save results to a dedicated directory
+    try:
+        results_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "results")
+        os.makedirs(results_dir, exist_ok=True)
+        safe_company_name = req.company_name.replace(" ", "_").replace("/", "-")
+        filename = f"{safe_company_name}_{audit_id}.json"
+        
+        with open(os.path.join(results_dir, filename), "w") as f:
+            json.dump(results, f, indent=4)
+        _log(store, "system", f"💾 Results independently saved to /data/results/{filename}")
+    except Exception as e:
+        _log(store, "system", f"⚠️ Failed to save JSON results: {e}")
 
 
 # ---------------------------------------------------------------------------

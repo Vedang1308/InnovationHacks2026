@@ -61,7 +61,13 @@ class SatelliteAgent:
                 ct_data = await self._query_climate_trace(client, facility, log_fn)
 
                 # --- Path 2: ASDI Sentinel-5P ---
-                asdi_data = await self._query_asdi_real(facility, log_fn)
+                scope = facility.get("scope_type", "Scope 1")
+                if "Scope 2" in scope or facility.get("type") in ("Data Center", "Office", "Fulfillment Center"):
+                    if log_fn:
+                        log_fn(f"   ⚡ Scope 2 Facility (Grid Power). Local NO2 satellite plumes are negligible; shifting to Grid Carbon indexing.")
+                    asdi_data = {"available": False, "note": "Scope 2 requires Grid intensity, not local NO2", "products": {}, "concentration_data": {}}
+                else:
+                    asdi_data = await self._query_asdi_real(facility, log_fn)
 
                 enriched = {
                     **facility,
@@ -101,6 +107,11 @@ class SatelliteAgent:
             best = self._find_nearest_asset(
                 assets, facility.get("lat", 0), facility.get("lng", 0)
             )
+
+            if not best:
+                if log_fn:
+                    log_fn(f"   ℹ️  No Climate TRACE matches within cutoff distance.")
+                return {"source": "climate_trace", "found": False, "emissions_tons": None}
 
             emissions_tons = None
             for s in best.get("EmissionsSummary", []):
@@ -294,18 +305,17 @@ class SatelliteAgent:
                 if not cogt_files:
                     return {}
 
-                # Pick the smallest file for demo speed
-                smallest = min(cogt_files, key=lambda x: x["Size"])
+                # Filter out empty or corrupted files (must be > 1MB)
+                valid_files = [f for f in cogt_files if f.get("Size", 0) > 1024 * 1024]
+                if not valid_files:
+                    return {}
+
+                # Pick the smallest valid file for demo speed
+                smallest = min(valid_files, key=lambda x: x["Size"])
                 file_key = smallest["Key"]
                 file_size_mb = smallest["Size"] / (1024 * 1024)
 
-                # Only download if < 50MB (demo constraint)
-                if file_size_mb > 50:
-                    return {
-                        "file_found": file_key,
-                        "file_size_mb": round(file_size_mb, 1),
-                        "skipped": "File too large for demo download",
-                    }
+                # Downloading file regardless of size
 
                 # Download to temp
                 tmp_dir = os.path.join(
@@ -333,15 +343,24 @@ class SatelliteAgent:
                 try:
                     import xarray as xr
 
-                    ds = xr.open_dataset(path, engine="netcdf4")
+                    try:
+                        ds = xr.open_dataset(path, engine="netcdf4", group="PRODUCT")
+                    except Exception:
+                        ds = xr.open_dataset(path, engine="netcdf4")
                     result = {"file": os.path.basename(path), "format": "NetCDF4"}
 
                     # Sentinel-5P NetCDF files have varying variable names
                     for var_name in ds.data_vars:
                         if "no2" in var_name.lower() or "nitrogendioxide" in var_name.lower():
                             data = ds[var_name]
-                            # Get global stats
-                            result["NO2"] = float(data.mean(skipna=True).values)
+                            global_mean = float(data.mean(skipna=True).values)
+                            try:
+                                # Estimate local value and subtract regional background to isolate anomaly plume
+                                local_val = float(data.sel(latitude=lat, longitude=lng, method="nearest").values)
+                                anomaly = max(0, local_val - global_mean)
+                            except Exception:
+                                anomaly = global_mean * 0.1 # crude fallback
+                            result["NO2"] = anomaly
                             result["NO2_unit"] = str(data.attrs.get("units", "mol/m2"))
                             break
 
@@ -367,9 +386,12 @@ class SatelliteAgent:
 
                     # Try to extract value at location
                     try:
+                        # Extract value at location and subtract background mean
                         val = ds.sel(y=lat, x=lng, method="nearest")
                         for var in val.data_vars:
-                            result["NO2"] = float(val[var].values)
+                            local_val = float(val[var].values)
+                            global_mean = float(ds[var].mean(skipna=True).values)
+                            result["NO2"] = max(0, local_val - global_mean) # anomaly
                             break
                     except Exception:
                         # Get global mean as fallback
@@ -399,13 +421,26 @@ class SatelliteAgent:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def _find_nearest_asset(self, assets: list[dict], lat: float, lng: float) -> dict:
-        def dist(asset):
+    def _find_nearest_asset(self, assets: list[dict], lat: float, lng: float) -> Optional[dict]:
+        import math
+        def haversine(lat1, lon1, lat2, lon2):
+            R = 6371.0 # km
+            dLat, dLon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+            a = math.sin(dLat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon/2)**2
+            return R * 2 * math.asin(math.sqrt(a))
+            
+        best = None
+        min_dist = float("inf")
+        for asset in assets:
             c = asset.get("Centroid", {}).get("Geometry", [0, 0])
-            if not c or len(c) < 2:
-                return float("inf")
-            return (c[1] - lat) ** 2 + (c[0] - lng) ** 2
-        return min(assets, key=dist)
+            if c and len(c) >= 2:
+                d = haversine(lat, lng, c[1], c[0])
+                if d < min_dist:
+                    min_dist, best = d, asset
+        # Strict cutoff: if nearest is >15km away, it's not the same facility
+        if min_dist > 15.0:
+            return None
+        return best
 
     @staticmethod
     def _extract_confidence(asset: dict) -> Optional[str]:
