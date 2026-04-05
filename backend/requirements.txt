@@ -15,3 +15,11 @@ unstructured
 xarray
 netcdf4
 boto3
+# RAG pipeline (from harshith branch)
+langchain-community
+langchain-text-splitters
+langchain-huggingface
+faiss-cpu
+sentence-transformers
+# ClimateBERT validation
+python-dotenv

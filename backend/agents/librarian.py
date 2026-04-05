@@ -1,9 +1,15 @@
 """
-Librarian Agent — NLP Specialist (Enhanced)
+Librarian Agent — NLP Specialist (Enhanced v3)
 Extracts facility information from corporate sustainability PDFs using:
-  1. unstructured.io for layout-aware parsing
-  2. Ollama/Llama 3 for intelligent extraction (with fallback)
-  3. pypdf-based regex heuristics as final fallback
+  1. RAG (FAISS + HuggingFace embeddings) for semantic chunk retrieval
+  2. ClimateBERT for validating climate-relevance of extracted chunks
+  3. Ollama/Llama 3 for intelligent LLM extraction
+  4. pypdf + unstructured for text extraction
+  5. Regex heuristics as final fallback
+
+Merges the best of both branches:
+  - main: live pipeline, async, timeout handling, regex fallback
+  - harshith: FAISS RAG, ClimateBERT validation, structured prompting
 """
 
 import json
@@ -39,30 +45,127 @@ TEXT FROM SUSTAINABILITY REPORT:
 
 
 class LibrarianAgent:
-    """Parses sustainability PDFs and extracts facility/asset data."""
+    """Parses sustainability PDFs and extracts facility/asset data.
 
-    async def extract_facilities(self, pdf_path: str) -> list[dict]:
+    Pipeline order:
+      1. Extract text from PDF (pypdf → unstructured fallback)
+      2. RAG ingest → semantic search for facility-relevant chunks
+      3. ClimateBERT filter: keep only climate-relevant chunks
+      4. LLM extraction (Ollama) on filtered context
+      5. Regex heuristic fallback if LLM/RAG unavailable
+    """
+
+    def __init__(self):
+        # Lazy-init RAG and ClimateBERT (may not be available)
+        self._rag = None
+        self._climate_bert = None
+        self._rag_initialized = False
+        self._cb_initialized = False
+
+    def _get_rag(self):
+        if not self._rag_initialized:
+            self._rag_initialized = True
+            try:
+                from agents.rag_processor import RAGProcessor
+                self._rag = RAGProcessor()
+                if not self._rag.available:
+                    print(f"⚠️  RAG unavailable: {self._rag.import_error}")
+                    self._rag = None
+                else:
+                    print("✅ RAG Processor (FAISS + HuggingFace) ready")
+            except Exception as e:
+                print(f"⚠️  RAG import error: {e}")
+                self._rag = None
+        return self._rag
+
+    def _get_climate_bert(self):
+        if not self._cb_initialized:
+            self._cb_initialized = True
+            try:
+                from agents.climate_auditor import ClimateAuditorAgent
+                self._climate_bert = ClimateAuditorAgent()
+                if self._climate_bert.available:
+                    print("✅ ClimateBERT validator ready")
+                else:
+                    print("ℹ️  ClimateBERT skipped (no HF_TOKEN)")
+            except Exception as e:
+                print(f"⚠️  ClimateBERT import error: {e}")
+                self._climate_bert = None
+        return self._climate_bert
+
+    async def extract_facilities(self, pdf_path: str, log_fn=None) -> list[dict]:
         """Extract facility information from a sustainability PDF.
 
-        Pipeline:
-          1. Try unstructured.io for layout-aware extraction
-          2. Fall back to pypdf for raw text
-          3. Use Ollama/Llama 3 for intelligent parsing (if available)
-          4. Fall back to regex heuristics
+        Enhanced pipeline:
+          1. Extract raw text from PDF
+          2. Try RAG path: ingest → semantic query → ClimateBERT filter → LLM
+          3. If RAG unavailable: keyword-scored sections → LLM
+          4. Fallback: regex heuristics
         """
+        def _log(msg):
+            if log_fn:
+                log_fn(msg)
+
         # Step 1: Extract text
         text = await self._extract_text(pdf_path)
         if not text or len(text) < 100:
+            _log("   ⚠️  PDF text too short, using demo facilities")
             return self._demo_facilities()
 
-        # Step 2: Try LLM-based extraction
-        facilities = await self._llm_extract(text)
+        _log(f"   📄 Extracted {len(text):,} characters from PDF")
+
+        # Step 2: Try RAG path (FAISS semantic search)
+        rag = self._get_rag()
+        rag_context = None
+
+        if rag is not None:
+            _log("   🔍 RAG: Ingesting PDF into FAISS vector index...")
+            chunk_count = await rag.ingest_report(pdf_path)
+            if chunk_count > 0:
+                _log(f"   📊 RAG: Indexed {chunk_count} chunks with all-MiniLM-L6-v2 embeddings")
+
+                # Semantic query for facility data
+                query = (
+                    "Detailed list of physical facilities, manufacturing sites, "
+                    "data centers, fulfillment centers, locations, and their "
+                    "Scope 1 or Scope 2 CO2 emissions"
+                )
+                chunks = await rag.query_report(query, k=10)
+                _log(f"   🎯 RAG: Found {len(chunks)} relevant chunks via similarity search")
+
+                # Step 2b: ClimateBERT filtering
+                cb = self._get_climate_bert()
+                if cb is not None and cb.available:
+                    _log("   🧠 ClimateBERT: Validating climate-relevance of chunks...")
+                    filtered = await cb.filter_relevant_chunks(chunks)
+                    removed = len(chunks) - len(filtered)
+                    if removed > 0:
+                        _log(f"   ✂️  ClimateBERT: Filtered out {removed} non-climate chunks")
+                    chunks = filtered
+
+                # Build context from RAG chunks
+                if chunks:
+                    rag_context = "\n--- Section ---\n".join(
+                        c["content"] for c in chunks
+                    )
+
+        # Step 3: LLM extraction
+        context_for_llm = rag_context or self._find_relevant_sections(text)
+        if not context_for_llm:
+            context_for_llm = text[:8000]
+
+        source_label = "RAG+ClimateBERT" if rag_context else "keyword-scored"
+        _log(f"   🤖 Sending {source_label} context to LLM...")
+        facilities = await self._llm_extract(context_for_llm)
         if facilities:
+            _log(f"   ✅ LLM extracted {len(facilities)} facilities")
             return facilities
 
-        # Step 3: Fallback to regex
+        # Step 4: Fallback to regex
+        _log("   🔧 LLM unavailable, using regex heuristics...")
         facilities = self._parse_facilities_from_text(text)
         if facilities:
+            _log(f"   ✅ Regex extracted {len(facilities)} facilities")
             return facilities
 
         return self._demo_facilities()
@@ -109,13 +212,7 @@ class LibrarianAgent:
 
     async def _llm_extract(self, text: str) -> list[dict]:
         """Use Ollama (Llama 3) to intelligently extract facilities."""
-        # Truncate to manageable size for LLM context
-        # Focus on the most relevant sections
-        relevant_text = self._find_relevant_sections(text)
-        if not relevant_text:
-            relevant_text = text[:8000]
-
-        prompt = FACILITY_EXTRACTION_PROMPT + relevant_text
+        prompt = FACILITY_EXTRACTION_PROMPT + text[:10000]  # Cap context size
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -179,7 +276,6 @@ class LibrarianAgent:
     @staticmethod
     def _parse_llm_response(response: str) -> list[dict]:
         """Parse JSON from LLM response, handling markdown code blocks."""
-        # Try to extract JSON array from response
         # Handle ```json ... ``` blocks
         json_match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", response, re.DOTALL)
         if json_match:
@@ -194,6 +290,14 @@ class LibrarianAgent:
             try:
                 return json.loads(array_match.group(0))
             except json.JSONDecodeError:
+                pass
+
+        # ast.literal_eval fallback (from harshith branch)
+        import ast
+        if array_match:
+            try:
+                return ast.literal_eval(array_match.group(0))
+            except Exception:
                 pass
 
         return []

@@ -43,6 +43,8 @@
             <span class="badge badge-asdi">ASDI</span>
             <span class="badge badge-s5p">Sentinel-5P</span>
             <span class="badge badge-lg">LangGraph</span>
+            <span class="badge badge-rag">FAISS RAG</span>
+            <span class="badge badge-cb">ClimateBERT</span>
         </div>
     </div>
 </header>
@@ -55,8 +57,9 @@
         <div class="control-group">
             <button id="btn-demo" class="btn btn-primary" onclick="runDemoAudit()">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                Run Demo Audit
+                Run Live Audit
             </button>
+
 
             <!-- Multi-Company Dropdown -->
             <div class="dropdown" id="company-dropdown">
@@ -70,7 +73,7 @@
                     <button onclick="runCompanyAudit('aps')">⚡ APS (AZ Utility)</button>
                     <hr>
                     <button onclick="runMultiAudit()">🔄 All 3 Companies</button>
-                    <button onclick="runPdfTest()">📄 Amazon PDF Test</button>
+
                 </div>
             </div>
 

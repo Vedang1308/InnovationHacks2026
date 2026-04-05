@@ -146,14 +146,14 @@ async function runDemoAudit() {
         const resp = await fetch(`${API_BASE}/api/audit/demo`, { method: "POST" });
         const data = await resp.json();
         currentAuditId = data.audit_id;
-        addTerminalLine("system", `   Audit ID: ${currentAuditId}`);
+        addTerminalLine("system", `   Audit ID: ${currentAuditId} (Dynamic PDF Mode)`);
         startEventStream(currentAuditId);
     } catch (err) {
-        addTerminalLine("system", `⚠️ Backend offline — running offline demo...`);
-        setStatus("Offline Demo", "running");
-        await runOfflineDemo();
+        addTerminalLine("system", `❌ Connection error: ${err.message}`);
+        setStatus("Error", "error");
     }
 }
+
 
 // ─── API: Run Company Audit ──────────────────────────────────────
 async function runCompanyAudit(companyKey) {
@@ -248,7 +248,7 @@ async function runPdfTest() {
     resetUI();
     setStatus("PDF Test", "running");
     setProgress(0);
-    addTerminalLine("system", "📄 Running Amazon 2024 Sustainability Report PDF test...");
+    addTerminalLine("system", "📄 Scanning real 2024 Sustainability Report...");
 
     try {
         const resp = await fetch(`${API_BASE}/api/audit/pdf-test`, { method: "POST" });
@@ -261,6 +261,7 @@ async function runPdfTest() {
         setStatus("Error", "error");
     }
 }
+
 
 async function uploadPDF(input) {
     if (!input.files.length) return;
@@ -521,92 +522,6 @@ function renderResults(results) {
     });
 
     if (bounds.length > 0) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 6 });
-}
-
-// ─── Offline Demo ────────────────────────────────────────────────
-async function runOfflineDemo() {
-    const facilities = [
-        { name: "Permian Basin Oil Field", city: "Midland", state: "TX", lat: 31.9973, lng: -102.0779,
-          type: "Oil & Gas Production", reported_emissions_tons: 45000000, satellite_emissions_tons: 68817666,
-          veracity_score: 34.6, discrepancy_pct: 65.4, direction: "under-reported", flagged: true, status: "discrepancy",
-          climate_trace: { found: true, asset_name: "Permian Midland Spraberry Oil TX", confidence: "low" },
-          asdi: { available: true, concentration_data: { NO2: 8.5e-5 } } },
-        { name: "Los Angeles County Transportation", city: "Los Angeles", state: "CA", lat: 34.0522, lng: -118.2437,
-          type: "Road Transportation", reported_emissions_tons: 30000000, satellite_emissions_tons: 38700675,
-          veracity_score: 77.5, discrepancy_pct: 22.5, direction: "under-reported", flagged: true, status: "caution",
-          climate_trace: { found: true, asset_name: "Los Angeles County", confidence: "low" },
-          asdi: { available: true, concentration_data: { NO2: 1.2e-4 } } },
-        { name: "Appalachian Marcellus Gas Field", city: "State College", state: "PA", lat: 40.7934, lng: -77.86,
-          type: "Oil & Gas Production", reported_emissions_tons: 35000000, satellite_emissions_tons: 45249905,
-          veracity_score: 77.4, discrepancy_pct: 22.6, direction: "under-reported", flagged: true, status: "caution",
-          climate_trace: { found: true, asset_name: "Appalachian Marcellus Dry Gas PA", confidence: "low" },
-          asdi: { available: true, concentration_data: { NO2: 6.1e-5 } } },
-        { name: "Alaska North Slope Operations", city: "Prudhoe Bay", state: "AK", lat: 70.2553, lng: -148.3372,
-          type: "Oil & Gas Transport", reported_emissions_tons: 25000000, satellite_emissions_tons: 38156015,
-          veracity_score: 65.5, discrepancy_pct: 34.5, direction: "under-reported", flagged: true, status: "discrepancy",
-          climate_trace: { found: true, asset_name: "Alaska North Slope Gas AK", confidence: "low" },
-          asdi: { available: true, concentration_data: { NO2: 3.2e-5 } } },
-        { name: "Gulf Coast Refinery Complex", city: "Houston", state: "TX", lat: 29.7604, lng: -95.3698,
-          type: "Petroleum Refining", reported_emissions_tons: 18000000, satellite_emissions_tons: 19500000,
-          veracity_score: 92.3, discrepancy_pct: 7.7, direction: "under-reported", flagged: false, status: "verified",
-          climate_trace: { found: true, asset_name: "Houston Ship Channel Refineries", confidence: "low" },
-          asdi: { available: true, concentration_data: { NO2: 9.8e-5 } } },
-    ];
-
-    const logs = [
-        ["system", "📊 Using LangGraph orchestrator (offline simulation)"],
-        ["librarian", "📚 Librarian Agent activated"],
-        ["librarian", "   Using demo facility dataset"],
-        ...facilities.map(f => ["librarian", `   📍 Found: ${f.name} — ${f.city}, ${f.state}`]),
-        ["geospatial", "🌍 Geospatial Agent activated"],
-        ...facilities.map(f => ["geospatial", `   ✅ Located: ${f.name} → (${f.lat.toFixed(4)}, ${f.lng.toFixed(4)})`]),
-        ["satellite", "🛰️  Satellite Agent activated — querying Climate TRACE & ASDI"],
-        ...facilities.flatMap(f => [
-            ["satellite", `   🛰️  Querying data for: ${f.name}`],
-            ["satellite", `   📊 Climate TRACE match: "${f.climate_trace.asset_name}" — ${formatTons(f.satellite_emissions_tons)} CO₂e`],
-            ["satellite", `   🌐 ASDI Sentinel-5P data available for (${f.lat.toFixed(2)}, ${f.lng.toFixed(2)})`],
-            ["satellite", `   📡 S3: s3://meeo-s5p/OFFL/ | NO₂ concentration: ${f.asdi.concentration_data.NO2.toExponential(2)} mol/m²`],
-        ]),
-        ["auditor", "🔍 Auditor Agent activated — calculating Veracity Scores"],
-        ...facilities.map(f => {
-            const emoji = f.flagged ? "🔴" : "🟢";
-            return ["auditor", `   ${emoji} ${f.name}: V=${f.veracity_score}% | Reported=${formatTons(f.reported_emissions_tons)} | Satellite=${formatTons(f.satellite_emissions_tons)} | ${f.direction}`];
-        }),
-        ["auditor", "   📋 Overall Veracity Score: 63.2%"],
-        ["auditor", "   🚩 4/5 facilities flagged (>20% discrepancy)"],
-        ["auditor", "✅ Audit complete!"],
-    ];
-
-    for (const [agent, msg] of logs) {
-        addTerminalLine(agent, msg);
-        setProgress(Math.round(((logs.indexOf([agent, msg]) + 1) / logs.length) * 100));
-        await sleep(60 + Math.random() * 80);
-    }
-
-    const totalR = facilities.reduce((s, f) => s + f.reported_emissions_tons, 0);
-    const totalS = facilities.reduce((s, f) => s + f.satellite_emissions_tons, 0);
-    const results = {
-        company_name: "Demo Energy Corp",
-        total_facilities_audited: facilities.length,
-        flagged_facilities: facilities.filter(f => f.flagged).length,
-        overall_veracity_score: Math.round((100 - Math.abs(totalS - totalR) / totalS * 100) * 10) / 10,
-        total_reported_tons: totalR,
-        total_satellite_tons: totalS,
-        facilities,
-    };
-
-    renderResults(results);
-    renderEvidence(facilities);
-    setStatus("Audit Complete", "ready");
-    setProgress(100);
-}
-
-// ─── Utilities ───────────────────────────────────────────────────
-function formatTons(tons) {
-    if (tons == null) return "N/A";
-    if (tons >= 1_000_000) return `${(tons / 1_000_000).toFixed(1)}M tons`;
-    if (tons >= 1_000) return `${(tons / 1_000).toFixed(0)}K tons`;
-    return `${tons} tons`;
 }
 
 function sleep(ms) {

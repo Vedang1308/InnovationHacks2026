@@ -14,6 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(
     title="TraceTrust API",
@@ -46,71 +49,23 @@ class MultiAuditRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Demo facility sets for multiple companies
+# Dynamic Company PDFs (Real Mode)
 # ---------------------------------------------------------------------------
-DEMO_FACILITIES = [
-    {
-        "name": "Permian Basin Oil Field",
-        "city": "Midland", "state": "TX", "country": "USA",
-        "type": "Oil & Gas Production",
-        "reported_emissions_tons": 45_000_000,
-    },
-    {
-        "name": "Los Angeles County Transportation",
-        "city": "Los Angeles", "state": "CA", "country": "USA",
-        "type": "Road Transportation",
-        "reported_emissions_tons": 30_000_000,
-    },
-    {
-        "name": "Appalachian Marcellus Gas Field",
-        "city": "State College", "state": "PA", "country": "USA",
-        "type": "Oil & Gas Production",
-        "reported_emissions_tons": 35_000_000,
-    },
-    {
-        "name": "Alaska North Slope Operations",
-        "city": "Prudhoe Bay", "state": "AK", "country": "USA",
-        "type": "Oil & Gas Transport",
-        "reported_emissions_tons": 25_000_000,
-    },
-    {
-        "name": "Gulf Coast Refinery Complex",
-        "city": "Houston", "state": "TX", "country": "USA",
-        "type": "Petroleum Refining",
-        "reported_emissions_tons": 18_000_000,
-    },
-]
-
-COMPANY_DATASETS = {
+COMPANY_PDF_MAP = {
     "amazon": {
-        "company_name": "Amazon",
-        "facilities": [
-            {"name": "GYR3 Fulfillment Center", "city": "Goodyear", "state": "AZ", "country": "USA", "type": "Fulfillment Center", "reported_emissions_tons": 15_000},
-            {"name": "SEA8 Fulfillment Center", "city": "Seattle", "state": "WA", "country": "USA", "type": "Fulfillment Center", "reported_emissions_tons": 12_000},
-            {"name": "AWS US-East-1 Data Center", "city": "Ashburn", "state": "VA", "country": "USA", "type": "Data Center", "reported_emissions_tons": 250_000},
-            {"name": "AWS US-West-2 Data Center", "city": "Boardman", "state": "OR", "country": "USA", "type": "Data Center", "reported_emissions_tons": 180_000},
-            {"name": "Amazon Wind Farm Texas", "city": "Snyder", "state": "TX", "country": "USA", "type": "Renewable Energy", "reported_emissions_tons": 0},
-        ],
+        "name": "Amazon",
+        "path": os.path.join(os.path.dirname(__file__), "..", "data", "pdfs", "amazon_2024_sustainability.pdf"),
     },
     "bp": {
-        "company_name": "BP plc",
-        "facilities": [
-            {"name": "Whiting Refinery", "city": "Whiting", "state": "IN", "country": "USA", "type": "Petroleum Refining", "reported_emissions_tons": 5_500_000},
-            {"name": "Cherry Point Refinery", "city": "Blaine", "state": "WA", "country": "USA", "type": "Petroleum Refining", "reported_emissions_tons": 2_100_000},
-            {"name": "Thunder Horse Platform", "city": "Gulf of Mexico", "state": "LA", "country": "USA", "type": "Oil & Gas Production", "reported_emissions_tons": 800_000},
-            {"name": "Prudhoe Bay Operations", "city": "Prudhoe Bay", "state": "AK", "country": "USA", "type": "Oil & Gas Production", "reported_emissions_tons": 3_000_000},
-        ],
+        "name": "BP plc",
+        "path": os.path.join(os.path.dirname(__file__), "..", "data", "pdfs", "bp_2024_sustainability.pdf"),
     },
     "aps": {
-        "company_name": "Arizona Public Service (APS)",
-        "facilities": [
-            {"name": "Palo Verde Nuclear Station", "city": "Tonopah", "state": "AZ", "country": "USA", "type": "Power", "reported_emissions_tons": 0},
-            {"name": "Four Corners Power Plant", "city": "Fruitland", "state": "NM", "country": "USA", "type": "Power", "reported_emissions_tons": 8_500_000},
-            {"name": "Cholla Power Plant", "city": "Joseph City", "state": "AZ", "country": "USA", "type": "Power", "reported_emissions_tons": 3_200_000},
-            {"name": "Ocotillo Power Plant", "city": "Tempe", "state": "AZ", "country": "USA", "type": "Power", "reported_emissions_tons": 1_500_000},
-        ],
+        "name": "Arizona Public Service (APS)",
+        "path": os.path.join(os.path.dirname(__file__), "..", "data", "pdfs", "aps_2024_sustainability.pdf"),
     },
 }
+
 
 
 # ---------------------------------------------------------------------------
@@ -129,16 +84,17 @@ async def health():
 
 @app.get("/api/demo")
 async def get_demo_data():
-    return {"company": "Demo Energy Corp", "facilities": DEMO_FACILITIES}
+    return {"company": "Amazon (Dynamic)", "pdf": "amazon_2024_sustainability.pdf"}
 
 
 @app.get("/api/companies")
 async def list_companies():
-    """List available pre-built company datasets for multi-company testing."""
+    """List available company PDFs for real-time auditing."""
     return {
-        k: {"company_name": v["company_name"], "facility_count": len(v["facilities"])}
-        for k, v in COMPANY_DATASETS.items()
+        k: {"company_name": v["name"], "pdf_exists": os.path.exists(v["path"])}
+        for k, v in COMPANY_PDF_MAP.items()
     }
+
 
 
 # ---------------------------------------------------------------------------
@@ -171,28 +127,32 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @app.post("/api/audit/demo")
 async def run_demo_audit():
+    """Run the dynamic Amazon PDF audit as the demo."""
+    info = COMPANY_PDF_MAP["amazon"]
     audit_id = f"demo_{int(time.time())}"
-    req = AuditRequest(company_name="Demo Energy Corp", facilities=DEMO_FACILITIES)
-    audit_store[audit_id] = _init_store("Demo Energy Corp", facilities=DEMO_FACILITIES)
-    asyncio.create_task(_run_pipeline(audit_id, req))
+    audit_store[audit_id] = _init_store(f"{info['name']} (Demo)", pdf_path=info["path"])
+    req = AuditRequest(company_name=f"{info['name']} (Demo)")
+    asyncio.create_task(_run_pipeline(audit_id, req, pdf_path=info["path"]))
     return {"audit_id": audit_id, "status": "started"}
+
 
 
 @app.post("/api/audit/company/{company_key}")
 async def run_company_audit(company_key: str):
-    """Run audit on a pre-built company dataset (amazon, bp, aps)."""
-    if company_key not in COMPANY_DATASETS:
-        raise HTTPException(404, f"Unknown company: {company_key}. Available: {list(COMPANY_DATASETS.keys())}")
+    """Run dynamic audit on a real company report (amazon, bp, aps)."""
+    if company_key not in COMPANY_PDF_MAP:
+        raise HTTPException(404, f"Unknown company: {company_key}. Available: {list(COMPANY_PDF_MAP.keys())}")
 
-    dataset = COMPANY_DATASETS[company_key]
+    info = COMPANY_PDF_MAP[company_key]
+    if not os.path.exists(info["path"]):
+        raise HTTPException(404, f"Report PDF not found for {info['name']} at {info['path']}")
+
     audit_id = f"{company_key}_{int(time.time())}"
-    req = AuditRequest(
-        company_name=dataset["company_name"],
-        facilities=dataset["facilities"],
-    )
-    audit_store[audit_id] = _init_store(dataset["company_name"], facilities=dataset["facilities"])
-    asyncio.create_task(_run_pipeline(audit_id, req))
-    return {"audit_id": audit_id, "status": "started", "company_name": dataset["company_name"]}
+    audit_store[audit_id] = _init_store(info["name"], pdf_path=info["path"])
+    req = AuditRequest(company_name=info["name"])
+    asyncio.create_task(_run_pipeline(audit_id, req, pdf_path=info["path"]))
+    return {"audit_id": audit_id, "status": "started", "company_name": info["name"]}
+
 
 
 @app.post("/api/audit/pdf-test")
@@ -214,19 +174,18 @@ async def run_pdf_test():
 # ---------------------------------------------------------------------------
 @app.post("/api/audit/multi")
 async def run_multi_company_audit():
-    """Run audits on all 3 companies: Amazon, BP, APS (AZ utility)."""
+    """Run dynamic audits on all real companies: Amazon, BP, APS."""
     audit_ids = {}
-    for key, dataset in COMPANY_DATASETS.items():
-        audit_id = f"multi_{key}_{int(time.time())}"
-        req = AuditRequest(
-            company_name=dataset["company_name"],
-            facilities=dataset["facilities"],
-        )
-        audit_store[audit_id] = _init_store(dataset["company_name"], facilities=dataset["facilities"])
-        asyncio.create_task(_run_pipeline(audit_id, req))
-        audit_ids[key] = audit_id
+    for key, info in COMPANY_PDF_MAP.items():
+        if os.path.exists(info["path"]):
+            audit_id = f"multi_{key}_{int(time.time())}"
+            audit_store[audit_id] = _init_store(info["name"], pdf_path=info["path"])
+            req = AuditRequest(company_name=info["name"])
+            asyncio.create_task(_run_pipeline(audit_id, req, pdf_path=info["path"]))
+            audit_ids[key] = audit_id
 
     return {"audit_ids": audit_ids, "status": "started"}
+
 
 
 # ---------------------------------------------------------------------------
@@ -336,17 +295,21 @@ async def _run_direct_pipeline(
     store["progress"] = 10
     _log(store, "librarian", "📚 Librarian Agent activated")
 
-    if req.facilities:
+    if pdf_path:
+        _log(store, "librarian", f"   Parsing Real Report: {os.path.basename(pdf_path)}")
+        librarian = LibrarianAgent()
+        facilities = await librarian.extract_facilities(
+            pdf_path,
+            log_fn=lambda m: _log(store, "librarian", m),
+        )
+        _log(store, "librarian", f"   ✅ Extracted {len(facilities)} facilities from document")
+    elif req.facilities:
         facilities = req.facilities
         _log(store, "librarian", f"   Using {len(facilities)} pre-supplied facilities")
-    elif pdf_path:
-        _log(store, "librarian", f"   Parsing PDF: {os.path.basename(pdf_path)}")
-        librarian = LibrarianAgent()
-        facilities = await librarian.extract_facilities(pdf_path)
-        _log(store, "librarian", f"   ✅ Extracted {len(facilities)} facilities from PDF")
     else:
-        facilities = DEMO_FACILITIES
-        _log(store, "librarian", "   Using demo facility dataset")
+        _log(store, "librarian", "❌ No PDF or facility data provided. Aborting.")
+        raise ValueError("Missing input data (PDF or facilities)")
+
 
     for f in facilities:
         _log(store, "librarian", f"   📍 Found: {f['name']} — {f.get('city', 'N/A')}, {f.get('state', '')}")

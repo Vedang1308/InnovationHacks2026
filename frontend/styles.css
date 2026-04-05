@@ -219,7 +219,7 @@ body::before {
 /* ===== Controls Bar ===== */
 #controls-bar {
     position: relative;
-    z-index: 10;
+    z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -819,6 +819,20 @@ footer a:hover {
     border: 1px solid rgba(6, 214, 160, 0.25);
 }
 
+/* ===== FAISS RAG Badge ===== */
+.badge-rag {
+    background: rgba(255, 159, 28, 0.1);
+    color: #ff9f1c;
+    border: 1px solid rgba(255, 159, 28, 0.3);
+}
+
+/* ===== ClimateBERT Badge ===== */
+.badge-cb {
+    background: rgba(72, 149, 239, 0.1);
+    color: #4895ef;
+    border: 1px solid rgba(72, 149, 239, 0.3);
+}
+
 /* ===== Accent Button ===== */
 .btn-accent {
     background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
@@ -842,6 +856,7 @@ footer a:hover {
     top: calc(100% + 6px);
     left: 0;
     min-width: 220px;
+    z-index: 1000;
     background: rgba(17, 24, 39, 0.95);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
